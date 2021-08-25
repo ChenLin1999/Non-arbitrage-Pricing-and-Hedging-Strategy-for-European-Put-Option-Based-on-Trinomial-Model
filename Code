@@ -1,0 +1,244 @@
+# Trinomial Model Implementation
+T = 2
+S0 = 100
+d = 0.5
+m = 1
+u = (m**2)/d
+R = 1
+K = 90
+
+# build an empty matrix of the right size
+import numpy as np
+stock = np.zeros([2 * T + 1, T + 1])
+stock
+
+# get stock prices
+for t in range(T + 1): 
+    for a in range(t + 1): # a is the number of times that the trend is u 
+        for b in range(t + 1 - a): # b is the number of times that the trend is d 
+            i = T - a + b # i is the row coordinate
+            stock[i, t] = S0 * (u**a) * (d**b) 
+            
+stock
+
+put_payoff = np.maximum(K - stock[:, T], 0)
+put_payoff
+
+# q_u + q_m + q_d = 1
+# u * q_u + m * q_m + d * q_d = R
+# the expression of q_u and q_d about q_m
+# q_u = (d - R)/(d - u) + (m - d)/(d - u) * q_m
+# q_d = (u - R)/(u - d) + (m - u)/(u - d) * q_m
+
+def option_pricer(payoff, q_m): 
+    option = np.zeros([2 * T + 1, T + 1]) # build an empty matrix of the right size
+    option[:, T] = payoff
+    for t in range(T - 1, -1, -1): 
+        for a in range(0, t + 1): # a is the number of times that the trend is u 
+            for b in range(0, t + 1 - a): # b is the number of times that the trend is d 
+                i = T - a + b # i is the row coordinate
+                option[i, t] = 1/R * (((d - R)/(d - u) + (m - d)/(d - u) * q_m) * option[i - 1, t + 1] + 
+                                      ((u - R)/(u - d) + (m - u)/(u - d) * q_m) * option[i + 1, t + 1] + q_m * option[i, t + 1])
+    return option
+ 
+ # enter the value of q_m
+q_m = 1/3
+
+# find the price of put
+put = option_pricer(put_payoff, q_m)
+put
+
+# Three Strategies of the Value of Ns
+
+# the first strategy
+# NB * R + NS * S0 * u = F(S0 * u)
+# NB * R + NS * S0 * m = F(S0 * m)
+# NB * R + NS * S0 * d = F(S0 * d)
+#
+# Since the trinomial model cannot directly calculate the NS value
+# try to imitate the binomial model to calculate the Ns value of the three formulas in pairs, and get the following three Ns values.
+# Ns_1 = (F(S0 * u) - F(S0 * d))/(S0 * u - S0 * d)    
+# Ns_2 = (F(S0 * u) - F(S0 * m))/(S0 * u - S0 * m)
+# Ns_3 = (F(S0 * m) - F(S0 * d))/(S0 * m - S0 * d)
+#
+# We propose the first strategy: the Ns value is the arithmetic average of the above three Ns values.
+# Ns = 1/3 * (Ns_1 + Ns_2 + Ns_3)
+
+def compute_hedge(stock, option):
+    NS = np.zeros([2 * T + 1, T]) # build an empty matrix of the right size
+    for t in range(0, T):
+        for a in range(0, t + 1): # a is the number of times that the trend is u 
+            for b in range(0, t + 1 - a): # b is the number of times that the trend is d 
+                i = T - a + b # i is the row coordinate
+
+            NS[i, t] = 1/3 * (
+                (option[i - 1, t + 1] - option[i + 1, t + 1]) / (stock[i - 1, t + 1] - stock[i + 1, t + 1]) +
+                (option[i, t + 1] - option[i + 1, t + 1]) / (stock[i, t + 1] - stock[i + 1, t + 1]) +
+                (option[i - 1, t + 1] - option[i, t + 1]) / (stock[i - 1, t + 1] - stock[i, t + 1]))
+    
+    return [NS]
+ # find the value of Ns at each point in time
+[NS] = compute_hedge(stock, put)
+[NS]
+
+import numpy
+def payoff_put(S, K):   # S is tomorrow's stock price and K is the strike price
+    return np.maximum(K - S, 0)   # we use np.maximum 
+def fitting_degree(NS, stock, option, K, N):
+    errors = [] # build an empty matrix 
+    for n in range(N):
+        # Since the trinomial model doesn't give us an explicit solutionis, the binomial model has a fixed explicit solution for X0,
+        # and we're going to assume that X0 is the value of X0 in terms of u and d trends。
+        X = (((R - d) / (u - d)) * payoff_put(S0 * u, K) + (1 - ((R - d) / (u - d)) * payoff_put(S0 * d, K) ))/R 
+        S = stock[T, 0]
+        W = T # W is the row of NS required
+        for t in range(T):
+            # In time 1, Y is u, m and d in the proportion of q_u, q_m and q_d.
+            Y = numpy.random.multinomial(1, [((d - R)/(d - u) + (m - d)/(d -u) * q_m), q_m ,((u - R)/(u - d) + (m - u)/(u - d) * q_m)] , size = 1)
+            if Y[0, 0] == 1: # if Y takes u 
+                X = X * R + NS[W, t] * S * (u - R)
+                W = W - 1
+                S = S * u 
+                option_payoff = payoff_put(S, K)
+            if Y[0, 1] == 1: # if Y takes m
+                X = X * R + NS[W, t] * S * (m - R)
+                W = W
+                S = S * m
+                option_payoff = payoff_put(S, K)
+            if Y[0, 2] == 1: # if Y takes d
+                X = X * R + NS[W, t] * S * (d - R)
+                W = W + 1
+                S = S * d 
+                option_payoff = payoff_put(S, K)
+        errors.append(abs(option_payoff - X)) # add to list errors 
+    return errors
+
+fitting_degree(NS, stock, put, 90, 1000)
+np.mean(fitting_degree(NS, stock, put, 90, 1000))
+# Because the difference is too large, this strategy is judged unreasonable.
+
+# the second strategy
+# NB * R + NS * S0 * u = F(S0 * u)
+# NB * R + NS * S0 * m = F(S0 * m)
+# NB * R + NS * S0 * d = F(S0 * d)
+#
+# Since the trinomial model cannot directly calculate the NS value
+# try to imitate the binomial model to calculate the Ns value of the three formulas in pairs, and get the following three Ns values.
+# Ns_1 = (F(S0 * u) - F(S0 * d))/(S0 * u - S0 * d)
+# Ns_2 = (F(S0 * u) - F(S0 * m))/(S0 * u - S0 * m)
+# Ns_3 = (F(S0 * m) - F(S0 * d))/(S0 * m - S0 * d)
+#
+# We propose a second strategy: the Ns value is the new value of the above three Ns values with respect to different proportions.
+# Ns = q_m * Ns_1 + q_u * Ns_2 + q_d * Ns_3
+
+def compute_hedge(stock, option, q_m):
+    NS = np.zeros([2 * T + 1, T])
+    for t in range(0, T):
+        for a in range(0, t + 1): 
+            for b in range(0, t + 1 - a): 
+                i = T - a + b 
+                
+            NS[i, t] = (q_m * (option[i - 1, t + 1] - option[i + 1, t + 1])) / (stock[i - 1, t + 1] - stock[i + 1, t + 1]) + (((d - R)/(d - u) + (m - d)/(d - u) * q_m) * (option[i - 1, t + 1] - option[i, t + 1])) / (stock[i - 1, t + 1] - stock[i, t + 1]) + (((u - R)/(u - d) + (m - u)/(u - d) * q_m) * (option[i, t + 1] - option[i + 1, t + 1])) / (stock[i, t + 1] - stock[i + 1, t + 1])
+                
+    return [NS]
+[NS] = compute_hedge(stock, put, 1/3)
+[NS]
+fitting_degree(NS, stock, put, 90, 1000)
+np.mean(fitting_degree(NS, stock, put, 90, 1000))   
+# Because the difference is too large, this strategy is judged unreasonable.
+
+# the third strategy
+# NB * R + NS * S0 * u = F(S0 * u)
+# NB * R + NS * S0 * m = F(S0 * m)
+# NB * R + NS * S0 * d = F(S0 * d)
+#
+# We propose a third strategy: N_b is treated as 0. N_s is found by the ratio of the sum of payoffs to the sum of three possible value of stocks. 
+# Ns = (F(S0 * u) + F(S0 * m) + F(S0 * d))/(u * S0 + m * S0 + d * S0)
+
+def compute_hedge(stock, option):
+    NS = np.zeros([2 * T + 1, T]) 
+    for t in range(0, T):
+        for a in range(0, t + 1):
+            for b in range(0, t + 1 - a):
+                i = T - a + b 
+          
+            NS[i, t] = (
+                (option[i - 1, t + 1] + option[i + 1, t + 1] + option[i, t + 1]) / (stock[i - 1, t + 1] + stock[i + 1, t + 1] + stock[i, t + 1])
+            )
+
+    return [NS]
+[NS] = compute_hedge(stock, put)
+[NS]
+fitting_degree(NS, stock, put, 90, 1000)
+np.mean(fitting_degree(NS, stock, put, 90, 1000))
+# Because the difference is too large, this strategy is judged unreasonable.
+# None of the three strategies is appropriate.
+
+# Boundaries
+# q_u + q_m + q_d = 1
+# u * q_u + m * q_m + d * q_d = R
+
+# the expression of q_u and q_d about q_m
+# q_u = (d - R)/(d - u) + (m - d)/(d - u) * q_m
+# q_d = (u - R)/(u - d) + (m - u)/(u - d) * q_m
+
+# 0 <= q_u <= 1 , 0 <= q_m <= 1 , 0 <= q_d <= 1
+# Change the format
+# ((R - u) * (d - u))/((d - u) * (m - d)) <= q_m <= ((R - d) * (d - u))/((d - u) * (m - d))
+# 0 <= q_m <= 1
+# ((R - d) * (u - d))/((u - d) * (m - u)) <= q_m <= ((R - u) * (u - d))/((u - d) * (m - u))
+
+Q_1 = ((R - u) * (d - u))/((d - u) * (m - d))
+Q_2 = ((R - d) * (d - u))/((d - u) * (m - d))
+Q_3 = ((R - d) * (u - d))/((u - d) * (m - u))
+Q_4 = ((R - u) * (u - d))/((u - d) * (m - u))
+# Q_ 1，Q_ 2，Q_ 3，Q_ 4 are the upper and lower bounds of these two ranges respectively.
+max(Q_1, 0, Q_3)
+min(Q_2, 1, Q_4)
+V0 = 1/R * (((d - R)/(d - u) + (m - d)/(d - u) * q_m) * put[T - 1, 1] + q_m * put[T, 1] + ((u - R)/(u - d) + (m - u)/(u - d) * q_m) * put[T + 1, 1])
+# Rearrange the equation we get
+V0 = 1/R * ((((d - R)/(d - u)) * put[T - 1, 1] + ((u - R)/(u - d)) * put[T + 1, 1]) + q_m * (((m - d)/(d - u)) * put[T - 1, 1] + put[T, 1] + ((m - u)/(u - d)) * put[T + 1, 1]))
+P1 = 1/R * (((d - R)/(d - u)) * put[T - 1, 1] + ((u - R)/(u - d)) * put[T + 1, 1]) #  P1 is the constant term on the right side of the formula
+P1
+P2 = 1/R * ((((m - d)/(d - u)) * put[T - 1, 1] + put[T, 1] + ((m - u)/(u - d)) * put[T + 1, 1])) # P2 is the coefficient of q_m on the right side of the formula
+P2
+if P2 >= 0:
+    print(f'The range of values of V0 is [{P1 + P2 * max(Q_1, 1, Q_3)}, {P1 + P2 * min(Q_2, 0, Q_4)}]')
+if P2 < 0:
+    print(f'The range of values of V0 is [{P1 + P2 * min(Q_2, 1, Q_4)}, {P1 + P2 * max(Q_1, 0, Q_3)}]')
+    
+# The Monte-Carlo Method
+T = 2
+S0 = 100
+d = 0.5
+m = 1
+u = (m**2)/d
+R = 1
+K = 90
+N = 10000 
+import numpy
+q_m = 1/3
+random_0 = numpy.random.multinomial(T, [((d - R)/(d - u) + (m - d)/(d - u) * q_m), q_m ,((u - R)/(u - d) + (m - u)/(u - d) * q_m)] , size = N)
+# In a period, the probabilities of u, m and d are q_u, q_m and q_d respectively. After T time, record the number of u,m ,d, and loop this process N times .
+random_0
+# We introduce a factor Y to represt ST/S0.
+Y = (u ** random_0[:, 0]) * (m ** random_0[:, 1]) * (d ** random_0[:, 2]) 
+Y
+stock_sim = S0 * Y # a list of simulating stock prices at maturity time
+stock_sim
+def payoff_put(S, K):   # S is tomorrow's stock price and K is the strike price
+    return np.maximum(K - S, 0)
+f = payoff_put(stock_sim, K) 
+f.mean()/ R**T # the Monte-Carlo estimate of the price 
+
+# Data Visualization
+np.cumsum(f) # cumulative sum 
+import numpy as np
+rolling_average = (np.cumsum(f)/(R**T)) / (np.arange(N) + 1) 
+import matplotlib.pyplot as plt
+import seaborn as sns
+sns.set() 
+plt.plot((np.arange(N) + 1)[N//2:], rolling_average[N//2:]);
+plt.xlabel('Number of samples')
+plt.ylabel('Approximated call value')
+plt.title('Monte-Carlo Approximation')
